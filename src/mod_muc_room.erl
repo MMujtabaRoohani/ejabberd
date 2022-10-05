@@ -4603,10 +4603,7 @@ get_title(StateData) ->
 
 -spec get_subject(state()) -> binary().
 get_subject(StateData) ->
-	case xmpp:get_text(StateData#state.subject) of
-	  <<"">> -> "New Subject";
-      Name -> Name
-	end.
+	xmpp:get_text(StateData#state.subject).
 
 -spec get_roomdesc_reply(jid(), state(), binary()) -> {item, binary()} | false.
 get_roomdesc_reply(JID, StateData, Tail) ->
