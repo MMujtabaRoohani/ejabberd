@@ -4333,6 +4333,7 @@ process_iq_disco_info(From, #iq{type = get, lang = Lang,
 
 -spec iq_disco_info_extras(binary(), state(), boolean()) -> xdata().
 iq_disco_info_extras(Lang, StateData, Static) ->
+	RoomSubject = get_subject(StateData),
     Config = StateData#state.config,
     AllowPM = case Config#config.allow_private_messages of
 		  false -> none;
@@ -4348,7 +4349,8 @@ iq_disco_info_extras(Lang, StateData, Static) ->
 	   {allowinvites, Config#config.allow_user_invites},
 	   {allow_query_users, Config#config.allow_query_users},
 	   {allowpm, AllowPM},
-	   {lang, Config#config.lang}],
+	   {lang, Config#config.lang},
+	   {subject, RoomSubject}],
     Fs2 = case Config#config.pubsub of
 	      Node when is_binary(Node), Node /= <<"">> ->
 		  [{pubsub, Node}|Fs1];
@@ -4658,6 +4660,13 @@ get_title(StateData) ->
       <<"">> -> StateData#state.room;
       Name -> Name
     end.
+
+-spec get_subject(state()) -> binary().
+get_subject(StateData) ->
+	case xmpp:get_text(StateData#state.subject) of
+	  <<"">> -> "New Subject";
+      Name -> Name
+	end.
 
 -spec get_roomdesc_reply(jid(), state(), binary()) -> {item, binary()} | false.
 get_roomdesc_reply(JID, StateData, Tail) ->
