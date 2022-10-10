@@ -28,6 +28,9 @@
 /test/*.beam
 /test/*.ctc
 /logs/
+/var/
+/etc/
+/share/
 /priv/bin/captcha*sh
 /priv/sql
 /rel/ejabberd
