@@ -185,8 +185,8 @@ cache_nodes(Mod, Host) ->
         false -> ejabberd_cluster:get_nodes()
     end.
 
--spec get_user_roster([#roster{}], {binary(), binary()}) -> [#roster{}].
-get_user_roster(Items, {U, S} = US) ->
+-spec get_user_roster([#roster_item{}], {binary(), binary()}) -> [#roster_item{}].
+get_user_roster(Items, {_, S} = US) ->
     {DisplayedGroups, Cache} = get_user_displayed_groups(US),
     SRUsers = lists:foldl(
 	fun(Group, Acc1) ->
@@ -202,24 +202,23 @@ get_user_roster(Items, {U, S} = US) ->
 	end,
 	dict:new(), DisplayedGroups),
     {NewItems1, SRUsersRest} = lists:mapfoldl(
-	fun(Item, SRUsers1) ->
-	    {_, _, {U1, S1, _}} = Item#roster.usj,
-	    US1 = {U1, S1},
+	fun(Item = #roster_item{jid = #jid{luser = User1, lserver = Server1}}, SRUsers1) ->
+	    US1 = {User1, Server1},
 	    case dict:find(US1, SRUsers1) of
 		{ok, GroupLabels} ->
-		    {Item#roster{subscription = both,
-				 groups = Item#roster.groups ++ GroupLabels,
-				 ask = none},
+		    {Item#roster_item{subscription = both,
+				      groups = Item#roster_item.groups ++ GroupLabels,
+				      ask = undefined},
 		     dict:erase(US1, SRUsers1)};
 		error ->
 		    {Item, SRUsers1}
 	    end
 	end,
 	SRUsers, Items),
-    SRItems = [#roster{usj = {U, S, {U1, S1, <<"">>}},
-		       us = US, jid = {U1, S1, <<"">>},
-		       name = get_rosteritem_name(U1, S1),
-		       subscription = both, ask = none, groups = GroupLabels}
+    SRItems = [#roster_item{jid = jid:make(U1, S1),
+			    name = get_rosteritem_name(U1, S1),
+			    subscription = both, ask = undefined,
+			    groups = GroupLabels}
 	       || {{U1, S1}, GroupLabels} <- dict:to_list(SRUsersRest)],
     SRItems ++ NewItems1.
 
@@ -423,6 +422,7 @@ create_group(Host, Group, Opts) ->
     end,
     case use_cache(Mod, Host) of
 	true ->
+	    ets_cache:delete(?GROUP_OPTS_CACHE, {Host, Group}, cache_nodes(Mod, Host)),
 	    ets_cache:insert(?GROUP_OPTS_CACHE, {Host, Group}, Opts, cache_nodes(Mod, Host));
 	_ ->
 	    ok
@@ -512,7 +512,8 @@ get_group_opt_cached(Host, Group, Opt, Default, Cache) ->
 	    proplists:get_value(Opt, Opts, Default)
     end.
 
-%% @spec (Host::string(), Group::string(), Opt::atom(), Default) -> OptValue | Default
+-spec get_group_opt(Host::binary(), Group::binary(), displayed_groups | label, Default) ->
+    OptValue::any() | Default.
 get_group_opt(Host, Group, Opt, Default) ->
     case get_group_opts(Host, Group) of
       error -> Default;
@@ -687,7 +688,8 @@ is_user_in_group(US, Group, Host) ->
 	    true
     end.
 
-%% @spec (Host::string(), {User::string(), Server::string()}, Group::string()) -> {atomic, ok} | error
+-spec add_user_to_group(Host::binary(), {User::binary(), Server::binary()},
+                        Group::binary()) -> {atomic, ok} | error.
 add_user_to_group(Host, US, Group) ->
     {_LUser, LServer} = US,
     case lists:member(LServer, ejabberd_config:get_option(hosts)) of
@@ -853,16 +855,14 @@ displayed_to_groups(GroupName, LServer) ->
 
 push_item(User, Server, Item) ->
     mod_roster:push_item(jid:make(User, Server),
-			 Item#roster{subscription = none},
+			 Item#roster_item{subscription = none},
 			 Item).
 
 push_roster_item(User, Server, ContactU, ContactS, ContactN,
 		 GroupLabel, Subscription) ->
-    Item = #roster{usj =
-		       {User, Server, {ContactU, ContactS, <<"">>}},
-		   us = {User, Server}, jid = {ContactU, ContactS, <<"">>},
-		   name = ContactN, subscription = Subscription, ask = none,
-		   groups = [GroupLabel]},
+    Item = #roster_item{jid = jid:make(ContactU, ContactS),
+			name = ContactN, subscription = Subscription, ask = undefined,
+			groups = [GroupLabel]},
     push_item(User, Server, Item).
 
 -spec c2s_self_presence({presence(), ejabberd_c2s:state()})

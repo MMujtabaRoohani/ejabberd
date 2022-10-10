@@ -1333,16 +1333,15 @@ get_roster(User, Server) ->
 %% several times, each one in a different group.
 make_roster_xmlrpc(Roster) ->
     lists:foldl(
-      fun(Item, Res) ->
-	      JIDS = jid:encode(Item#roster.jid),
-	      Nick = Item#roster.name,
-	      Subs = atom_to_list(Item#roster.subscription),
-	      Ask = atom_to_list(Item#roster.ask),
-	      Groups = case Item#roster.groups of
+      fun(#roster_item{jid = JID, name = Nick, subscription = Sub, ask = Ask} = Item, Res) ->
+	      JIDS = jid:encode(JID),
+	      Subs = atom_to_list(Sub),
+	      Asks = atom_to_list(Ask),
+	      Groups = case Item#roster_item.groups of
 			   [] -> [<<>>];
 			   Gs -> Gs
 		       end,
-	      ItemsX = [{JIDS, Nick, Subs, Ask, Group} || Group <- Groups],
+	      ItemsX = [{JIDS, Nick, Subs, Asks, Group} || Group <- Groups],
 	      ItemsX ++ Res
       end,
       [],
@@ -1410,7 +1409,7 @@ push_roster_item(LU, LS, R, U, S, Action) ->
       xmpp:set_from_to(ResIQ, jid:remove_resource(LJID), LJID)).
 
 build_roster_item(U, S, {add, Nick, Subs, Group}) ->
-    Groups = binary:split(Group,<<";">>, [global]),
+    Groups = binary:split(Group,<<";">>, [global, trim]),
     #roster_item{jid = jid:make(U, S),
 		 name = Nick,
 		 subscription = misc:binary_to_atom(Subs),
@@ -1538,7 +1537,8 @@ srg_user_del(User, Host, Group, GroupHost) ->
 %%%
 
 %% @doc Send a message to an XMPP account.
-%% @spec (Type::binary(), From::binary(), To::binary(), Subject::binary(), Body::binary()) -> ok
+-spec send_message(Type::binary(), From::binary(), To::binary(),
+                   Subject::binary(), Body::binary()) -> ok.
 send_message(Type, From, To, Subject, Body) ->
     CodecOpts = ejabberd_config:codec_options(),
     try xmpp:decode(

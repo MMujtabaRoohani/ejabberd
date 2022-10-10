@@ -65,21 +65,21 @@ fi
 rel_name='ejabberd'
 rel_vsn=$(git describe --tags | sed -e 's/-g.*//' -e 's/-/./' | tr -d '[:space:]')
 mix_vsn=$(mix_version "$rel_vsn")
-crosstool_vsn='1.25.0_rc2'
+crosstool_vsn='1.25.0'
 termcap_vsn='1.3.1'
-expat_vsn='2.4.8'
+expat_vsn='2.4.9'
 zlib_vsn='1.2.12'
 yaml_vsn='0.2.5'
-ssl_vsn='1.1.1o'
-otp_vsn='24.3.4'
-elixir_vsn='1.13.4'
+ssl_vsn='1.1.1q'
+otp_vsn='24.3.4.5'
+elixir_vsn='1.14.0'
 pam_vsn='1.5.2'
-png_vsn='1.6.37'
+png_vsn='1.6.38'
 jpeg_vsn='9e'
-webp_vsn='1.2.2'
+webp_vsn='1.2.4'
 gd_vsn='2.3.3'
 odbc_vsn='2.3.11'
-sqlite_vsn='3380400'
+sqlite_vsn='3390300'
 root_dir="${BUILD_DIR:-$HOME/build}"
 bootstrap_dir="$root_dir/bootstrap"
 ct_prefix_dir="$root_dir/x-tools"
@@ -189,7 +189,7 @@ check_configured_dep_vsns()
 	          'zlib-\([1-9][0-9.]*\)\.tar\.gz'
 	check_vsn 'Expat' "$expat_vsn" \
 	          'https://github.com/libexpat/libexpat/releases' \
-	          'expat-\([1-9][0-9.]*\)\.tar\.gz'
+	          '[0-9]\]\([1-9][0-9.]*\)'
 	check_vsn 'Termcap' "$termcap_vsn" \
 	          'https://ftp.gnu.org/gnu/termcap/' \
 	          'termcap-\([1-9][0-9.]*\)\.tar\.gz'
@@ -201,7 +201,7 @@ check_configured_dep_vsns()
 	          'unixODBC-\([1-9][0-9.]*\)\.tar\.gz'
 	check_vsn 'Linux-PAM' "$pam_vsn" \
 	          'https://github.com/linux-pam/linux-pam/releases' \
-	          'Linux-PAM-\([1-9][0-9.]*\)\.tar\.xz'
+	          '[0-9]\]Linux-PAM \([1-9][0-9.]*\)'
 	check_vsn 'libpng' "$png_vsn" \
 	          'http://www.libpng.org/pub/png/libpng.html' \
 		  'libpng-\([1-9][0-9.]*\)\.tar\.gz'
@@ -213,7 +213,7 @@ check_configured_dep_vsns()
 	          'libwebp-\([1-9][0-9.]*\)\.tar\.gz'
 	check_vsn 'LibGD' "$gd_vsn" \
 	          'https://github.com/libgd/libgd/releases' \
-	          'libgd-\([1-9][0-9.]*\)\.tar\.gz'
+	          'gd-\([1-9][0-9.]*\)'
 	check_vsn 'Elixir' "$elixir_vsn" \
 	          'https://elixir-lang.org/install.html' \
 	          'v\([1-9][0-9.]*\)\.tar\.gz'
@@ -357,6 +357,15 @@ add_systemd_unit()
 }
 #.
 
+#' Add CAPTCHA script(s).
+add_captcha_script()
+{
+	local code_dir="$1"
+
+	cp -p 'tools/captcha'*'.sh' "$code_dir/lib"
+}
+#.
+
 #' Use our VT100 to avoid depending on Terminfo, adjust options/paths.
 edit_ejabberdctl()
 {
@@ -367,6 +376,7 @@ edit_ejabberdctl()
 	    -e '/ERL_OPTIONS=/d' \
 	    -e 's|^ERLANG_NODE=ejabberd$|ERLANG_NODE=ejabberd@localhost|' \
 	    -e 's|_DIR:=".*}/|_DIR:="/opt/ejabberd/|' \
+	    -e 's|/database|/database/$ERLANG_NODE|' \
 	    "$code_dir/bin/${rel_name}ctl"
 }
 #.
@@ -727,11 +737,11 @@ build_rel()
 
 	info "Building $rel_name $rel_vsn for $arch ..."
 	./autogen.sh
-	eimp_defs='-DHAVE_GD -DHAVE_WEBP -DHAVE_JPEG -DHAVE_PNG'
+	eimp_cflags='-fcommon'
 	eimp_libs='-lwebp -ljpeg -lpng -lz -lm'
 	export CC="$CC -Wl,-ldl" # Required by (statically linking) epam.
 	export LIBS="$eimp_libs -lcrypto -lpthread -ldl"
-	export CFLAGS="$CFLAGS $eimp_defs"
+	export CFLAGS="$CFLAGS $eimp_cflags"
 	export LDFLAGS="$LDFLAGS $eimp_libs"
 	if [ "$mode" = 'cross' ]
 	then
@@ -747,7 +757,7 @@ build_rel()
 	    --enable-all \
 	    --disable-erlang-version-check
 	make deps
-	sed -i 's/ *-lstdc++ *//g' 'deps/'*'/rebar.config'* # Link statically.
+	sed -i 's/ *-lstdc++//g' 'deps/'*'/rebar.config'* # Link statically.
 	if [ "$mode" = 'cross' ]
 	then
 		ln -s "$prefix/lib/erlang" 'lib/erlang'
@@ -774,6 +784,7 @@ build_rel()
 	tar -C "$target_dst_dir" -xzf "$rel_dir/$rel_tar"
 	create_data_dir "$target_dst_dir" "$target_data_dir"
 	add_systemd_unit "$target_dst_dir"
+	add_captcha_script "$target_dst_dir"
 	edit_ejabberdctl "$target_dst_dir"
 	remove_unused_files "$target_dst_dir"
 	strip_files "$target_dst_dir" "$STRIP"

@@ -43,7 +43,7 @@ defmodule Ejabberd.MixProject do
      extra_applications: [:mix],
      applications: [:idna, :inets, :kernel, :sasl, :ssl, :stdlib,
                     :base64url, :fast_tls, :fast_xml, :fast_yaml, :jiffy, :jose,
-                    :p1_utils, :stringprep, :yconf],
+                    :p1_utils, :stringprep, :syntax_tools, :yconf],
      included_applications: [:mnesia, :os_mon,
                              :cache_tab, :eimp, :mqtree, :p1_acme,
                              :p1_oauth2, :pkix, :xmpp]
@@ -101,6 +101,7 @@ defmodule Ejabberd.MixProject do
     [{:base64url, "~> 1.0"},
      {:cache_tab, "~> 1.0"},
      {:eimp, "~> 1.0"},
+     {:ex_doc, ">= 0.0.0", only: :dev},
      {:fast_tls, "~> 1.1"},
      {:fast_xml, "~> 1.1"},
      {:fast_yaml, "~> 1.0"},
@@ -113,7 +114,7 @@ defmodule Ejabberd.MixProject do
      {:p1_utils, "~> 1.0"},
      {:pkix, "~> 1.0"},
      {:stringprep, ">= 1.0.26"},
-     {:xmpp, "~> 1.5"},
+     {:xmpp, git: "https://github.com/processone/xmpp.git", ref: "62325549cced01b12878d79286311ae62fe0fc4f", override: true},
      {:yconf, "~> 1.0"}]
     ++ cond_deps()
   end
@@ -137,7 +138,7 @@ defmodule Ejabberd.MixProject do
                          {config(:zlib), {:ezlib, "~> 1.0"}},
                          {if_version_below('22', true), {:lager, "~> 3.9.1"}},
                          {config(:lua), {:luerl, "~> 1.0"}},
-                         {config(:mysql), {:p1_mysql, "~> 1.0"}},
+                         {config(:mysql), {:p1_mysql, "~> 1.0.20"}},
                          {config(:pgsql), {:p1_pgsql, "~> 1.1"}},
                          {config(:sqlite), {:sqlite3, "~> 1.1"}},
                          {config(:stun), {:stun, "~> 1.0"}}], do:
@@ -163,7 +164,7 @@ defmodule Ejabberd.MixProject do
               "COPYING", "README.md",
               "mix.exs", "rebar.config", "rebar.config.script", "vars.config"],
       maintainers: ["ProcessOne"],
-      licenses: ["GPLv2"],
+      licenses: ["GPL-2.0-or-later"],
       links: %{"Site" => "https://www.ejabberd.im",
                "Documentation" => "http://docs.ejabberd.im",
                "Source" => "https://github.com/processone/ejabberd",

@@ -78,8 +78,6 @@
 -define(MAX_USERS_DEFAULT_LIST,
 	[5, 10, 20, 30, 50, 100, 200, 500, 1000, 2000, 5000]).
 
--define(DEFAULT_MAX_USERS_PRESENCE,1000).
-
 -define(MUC_HAT_ADD_CMD, <<"http://prosody.im/protocol/hats#add">>).
 -define(MUC_HAT_REMOVE_CMD, <<"http://prosody.im/protocol/hats#remove">>).
 -define(MUC_HAT_LIST_CMD, <<"p1:hats#list">>).
@@ -1732,7 +1730,17 @@ set_role(JID, Role, StateData) ->
 		   end, StateData#state.users, LJIDs),
 		 StateData#state.nicks}
 	end,
-    StateData#state{users = Users, nicks = Nicks}.
+    Roles = case Role of
+                %% Don't persist 'none' role: if someone is kicked, they will
+                %% maintain the same role they had *before* they were kicked
+                none ->
+                    StateData#state.roles;
+                NewRole ->
+                    maps:put(jid:remove_resource(LJID),
+                             NewRole,
+                             StateData#state.roles)
+    end,
+    StateData#state{users = Users, nicks = Nicks, roles = Roles}.
 
 -spec get_role(jid(), state()) -> role().
 get_role(JID, StateData) ->
@@ -1952,8 +1960,23 @@ set_subscriber(JID, Nick, Nodes,
     store_room(NewStateData, [{add_subscription, BareJID, Nick, Nodes}]),
     case not muc_subscribers_is_key(LBareJID, StateData#state.muc_subscribers) of
 	true ->
-	    send_subscriptions_change_notifications(BareJID, Nick, subscribe, NewStateData),
-	    ejabberd_hooks:run(muc_subscribed, ServerHost, [ServerHost, Room, Host, BareJID]);
+	    Packet1a = #message{
+		sub_els = [#ps_event{
+		    items = #ps_items{
+			node = ?NS_MUCSUB_NODES_SUBSCRIBERS,
+			items = [#ps_item{
+			    id = p1_rand:get_string(),
+			    sub_els = [#muc_subscribe{jid = BareJID, nick = Nick}]}]}}]},
+	    Packet1b = #message{
+		sub_els = [#ps_event{
+		    items = #ps_items{
+			node = ?NS_MUCSUB_NODES_SUBSCRIBERS,
+			items = [#ps_item{
+			    id = p1_rand:get_string(),
+			    sub_els = [#muc_subscribe{nick = Nick}]}]}}]},
+	    {Packet2a, Packet2b} = ejabberd_hooks:run_fold(muc_subscribed, ServerHost, {Packet1a, Packet1b},
+							   [ServerHost, Room, Host, BareJID, StateData]),
+	    send_subscriptions_change_notifications(Packet2a, Packet2b, NewStateData);
 	_ ->
 	    ok
     end,
@@ -2121,15 +2144,15 @@ add_new_user(From, Nick, Packet, StateData) ->
 	mod_muc_opt:max_user_conferences(StateData#state.server_host),
     Collision = nick_collision(From, Nick, StateData),
     IsSubscribeRequest = not is_record(Packet, presence),
-    case {(ServiceAffiliation == owner orelse
-	     ((Affiliation == admin orelse Affiliation == owner)
+    case {ServiceAffiliation == owner orelse
+	     ((((Affiliation == admin orelse Affiliation == owner)
 	       andalso NUsers < MaxAdminUsers)
 	       orelse NUsers < MaxUsers)
-	    andalso NConferences < MaxConferences,
+	    andalso NConferences < MaxConferences),
 	  Collision,
 	  mod_muc:can_use_nick(StateData#state.server_host,
 			       StateData#state.host, From, Nick),
-	  get_default_role(Affiliation, StateData)}
+	  get_occupant_initial_role(From, Affiliation, StateData)}
 	of
       {false, _, _, _} when NUsers >= MaxUsers orelse NUsers >= MaxAdminUsers ->
 	  Txt = ?T("Too many users in this conference"),
@@ -2999,22 +3022,26 @@ process_item_change(Item, SD, UJID) ->
 		send_kickban_presence(UJID, JID, Reason, 307, SD),
 		set_role(JID, none, SD);
 	    {JID, affiliation, none, Reason} ->
-		case (SD#state.config)#config.members_only of
-		    true ->
-			send_kickban_presence(UJID, JID, Reason, 321, none, SD),
-			maybe_send_affiliation(JID, none, SD),
-			SD1 = set_affiliation(JID, none, SD),
-			set_role(JID, none, SD1);
-		    _ ->
-			SD1 = set_affiliation(JID, none, SD),
-			SD2 = case (SD1#state.config)#config.moderated of
-			    true -> set_role(JID, visitor, SD1);
-			    false -> set_role(JID, participant, SD1)
-			end,
-			send_update_presence(JID, Reason, SD2, SD),
-			maybe_send_affiliation(JID, none, SD2),
-			SD2
-		end;
+                case get_affiliation(JID, SD) of
+                    none -> SD;
+                    _ ->
+                        case (SD#state.config)#config.members_only of
+                            true ->
+                                send_kickban_presence(UJID, JID, Reason, 321, none, SD),
+                                maybe_send_affiliation(JID, none, SD),
+                                SD1 = set_affiliation(JID, none, SD),
+                                set_role(JID, none, SD1);
+                            _ ->
+                                SD1 = set_affiliation(JID, none, SD),
+                                SD2 = case (SD1#state.config)#config.moderated of
+                                          true -> set_role(JID, visitor, SD1);
+                                          false -> set_role(JID, participant, SD1)
+                                      end,
+                                send_update_presence(JID, Reason, SD2, SD),
+                                maybe_send_affiliation(JID, none, SD2),
+                                SD2
+                        end
+                end;
 	    {JID, affiliation, outcast, Reason} ->
 		send_kickban_presence(UJID, JID, Reason, 301, outcast, SD),
 		maybe_send_affiliation(JID, outcast, SD),
@@ -3991,6 +4018,8 @@ set_opts([{Opt, Val} | Opts], StateData) ->
                   StateData#state{muc_subscribers = MUCSubscribers};
 	    affiliations ->
 		StateData#state{affiliations = maps:from_list(Val)};
+	    roles ->
+		StateData#state{roles = maps:from_list(Val)};
 	    subject ->
 		  Subj = if Val == <<"">> -> [];
 			    is_binary(Val) -> [#text{data = Val}];
@@ -4003,7 +4032,9 @@ set_opts([{Opt, Val} | Opts], StateData) ->
                            lists:map(fun({U, H}) -> {U, maps:from_list(H)} end,
                                      Val)),
                   StateData#state{hats_users = Hats};
-	    _ -> StateData
+	    Other ->
+                  ?INFO_MSG("Unknown MUC room option, will be discarded: ~p", [Other]),
+                  StateData
 	  end,
     set_opts(Opts, NSD).
 
@@ -4021,6 +4052,18 @@ set_vcard_xupdate(#state{config =
     end;
 set_vcard_xupdate(State) ->
     State.
+
+get_occupant_initial_role(Jid, Affiliation, #state{roles = Roles} = StateData) ->
+    DefaultRole = get_default_role(Affiliation, StateData),
+    case (StateData#state.config)#config.moderated of
+        true ->
+            get_occupant_stored_role(Jid, Roles, DefaultRole);
+        false ->
+            DefaultRole
+    end.
+
+get_occupant_stored_role(Jid, Roles, DefaultRole) ->
+    maps:get(jid:split(jid:remove_resource(Jid)), Roles, DefaultRole).
 
 -define(MAKE_CONFIG_OPT(Opt),
 	{get_config_opt_name(Opt), element(Opt, Config)}).
@@ -4065,6 +4108,7 @@ make_opts(StateData, Hibernation) ->
       (?SETS):to_list((StateData#state.config)#config.captcha_whitelist)},
      {affiliations,
       maps:to_list(StateData#state.affiliations)},
+     {roles, maps:to_list(StateData#state.roles)},
      {subject, StateData#state.subject},
      {subject_author, StateData#state.subject_author},
      {hats_users,
@@ -4303,6 +4347,7 @@ iq_disco_info_extras(Lang, StateData, Static) ->
 	   {description, Config#config.description},
 	   {changesubject, Config#config.allow_change_subj},
 	   {allowinvites, Config#config.allow_user_invites},
+	   {allow_query_users, Config#config.allow_query_users},
 	   {allowpm, AllowPM},
 	   {lang, Config#config.lang},
 	   {subject, RoomSubject}],
@@ -4528,8 +4573,23 @@ process_iq_mucsub(From, #iq{type = set, sub_els = [#muc_unsubscribe{}]},
 	{MUCSubscribers, #subscriber{nick = Nick}} ->
 	    NewStateData = StateData#state{muc_subscribers = MUCSubscribers},
 	    store_room(NewStateData, [{del_subscription, LBareJID}]),
-	    send_subscriptions_change_notifications(BareJID, Nick, unsubscribe, StateData),
-	    ejabberd_hooks:run(muc_unsubscribed, ServerHost, [ServerHost, Room, Host, BareJID]),
+	    Packet1a = #message{
+		sub_els = [#ps_event{
+		    items = #ps_items{
+			node = ?NS_MUCSUB_NODES_SUBSCRIBERS,
+			items = [#ps_item{
+			    id = p1_rand:get_string(),
+			    sub_els = [#muc_unsubscribe{jid = BareJID, nick = Nick}]}]}}]},
+	    Packet1b = #message{
+		sub_els = [#ps_event{
+		    items = #ps_items{
+			node = ?NS_MUCSUB_NODES_SUBSCRIBERS,
+			items = [#ps_item{
+			    id = p1_rand:get_string(),
+			    sub_els = [#muc_unsubscribe{nick = Nick}]}]}}]},
+	    {Packet2a, Packet2b} = ejabberd_hooks:run_fold(muc_unsubscribed, ServerHost, {Packet1a, Packet1b},
+							   [ServerHost, Room, Host, BareJID, StateData]),
+	    send_subscriptions_change_notifications(Packet2a, Packet2b, StateData),
 	    NewStateData2 = case close_room_if_temporary_and_empty(NewStateData) of
 		{stop, normal, _} -> stop;
 		{next_state, normal_state, SD} -> SD
@@ -5123,8 +5183,8 @@ store_room_no_checks(StateData, ChangesHints, Hibernation) ->
 		       make_opts(StateData, Hibernation),
 		       ChangesHints).
 
--spec send_subscriptions_change_notifications(jid(), binary(), subscribe|unsubscribe, state()) -> ok.
-send_subscriptions_change_notifications(From, Nick, Type, State) ->
+-spec send_subscriptions_change_notifications(stanza(), stanza(), state()) -> ok.
+send_subscriptions_change_notifications(Packet, PacketWithoutJid, State) ->
     {WJ, WN} =
         maps:fold(
           fun(_, #subscriber{jid = JID}, {WithJid, WithNick}) ->
@@ -5140,37 +5200,13 @@ send_subscriptions_change_notifications(From, Nick, Type, State) ->
           muc_subscribers_get_by_node(?NS_MUCSUB_NODES_SUBSCRIBERS,
                                       State#state.muc_subscribers)),
     if WJ /= [] ->
-	Payload1 = case Type of
-		       subscribe -> #muc_subscribe{jid = From, nick = Nick};
-		       _ -> #muc_unsubscribe{jid = From, nick = Nick}
-		   end,
-	Packet1 = #message{
-	    sub_els = [#ps_event{
-		items = #ps_items{
-		    node = ?NS_MUCSUB_NODES_SUBSCRIBERS,
-		    items = [#ps_item{
-			id = p1_rand:get_string(),
-			sub_els = [Payload1]}]}}]},
-	Packet1a = xmpp:put_meta(Packet1, mucsub_subscriber_jid, From),
 	ejabberd_router_multicast:route_multicast(State#state.jid, State#state.server_host,
-						  WJ, Packet1a, false);
+						  WJ, Packet, false);
 	true -> ok
     end,
     if WN /= [] ->
-	Payload2 = case Type of
-		       subscribe -> #muc_subscribe{nick = Nick};
-		       _ -> #muc_unsubscribe{nick = Nick}
-		   end,
-	Packet2 = #message{
-	    sub_els = [#ps_event{
-		items = #ps_items{
-		    node = ?NS_MUCSUB_NODES_SUBSCRIBERS,
-		    items = [#ps_item{
-			id = p1_rand:get_string(),
-			sub_els = [Payload2]}]}}]},
-	Packet2a = xmpp:put_meta(Packet2, mucsub_subscriber_jid, From),
 	ejabberd_router_multicast:route_multicast(State#state.jid, State#state.server_host,
-						  WN, Packet2a, false);
+						  WN, PacketWithoutJid, false);
 	true -> ok
     end.
 

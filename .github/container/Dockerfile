@@ -28,24 +28,25 @@ RUN apk upgrade --update musl \
 RUN mix local.hex --force \
     && mix local.rebar --force
 
+COPY . ./ejabberd
+
 WORKDIR ejabberd
 
-RUN git clone https://github.com/processone/ejabberd.git . \
-    && git checkout $VERSION \
-    && mv .github/container/ejabberdctl.template . \
+RUN mv .github/container/ejabberdctl.template . \
     && ./autogen.sh \
     && ./configure --with-rebar=mix --enable-all \
-    && mix deps.get \
+    && make deps \
     && make rel
 
 RUN cp -r _build/prod/rel/ejabberd/ /opt/ejabberd-$VERSION \
     && mkdir -p /opt/ejabberd \
     && mv /opt/ejabberd-$VERSION/conf /opt/ejabberd/conf
 
-RUN DESCRIBE=$(git describe --tags) \
-    && MIXVER=$(echo $DESCRIBE.0 | sed -e 's/-g.*//' -e 's/-/./' | tr -d '[:space:]') \
-    && mkdir /opt/ejabberd-$VERSION/lib/ejabberd-$MIXVER/priv/bin \
-    && cp tools/captcha*.sh /opt/ejabberd-$VERSION/lib/ejabberd-$MIXVER/priv/bin/
+RUN BINPATH=$(dirname $(find /opt -name msgs))/bin/ \
+    && mkdir -p $BINPATH \
+    && cp tools/captcha*.sh $BINPATH
+
+RUN [ ! -d .ejabberd-modules ] || cp -r .ejabberd-modules /opt/ejabberd/
 
 RUN export PEM=/opt/ejabberd/conf/server.pem \
     && curl -o "/opt/ejabberd/conf/cacert.pem" 'https://curl.se/ca/cacert.pem' \
@@ -64,6 +65,7 @@ RUN export PEM=/opt/ejabberd/conf/server.pem \
 
 FROM alpine:3.15.4
 ENV HOME=/opt/ejabberd
+ARG VERSION=master
 
 RUN apk upgrade --update musl \
     && apk add \
@@ -93,7 +95,7 @@ RUN echo -e \
     \nexport CONFIG_DIR=/opt/ejabberd/conf \
     \nexport LOGS_DIR=/opt/ejabberd/logs \
     \nexport SPOOL_DIR=/opt/ejabberd/database \
-    \nexec $(find /opt -name ejabberdctl) \"\$@\"" > /usr/local/bin/ejabberdctl \
+    \nexec /opt/ejabberd-$VERSION/bin/ejabberdctl \"\$@\"" > /usr/local/bin/ejabberdctl \
     && chmod +x /usr/local/bin/ejabberdctl
 
 RUN addgroup ejabberd -g 9000 \
@@ -102,16 +104,16 @@ RUN addgroup ejabberd -g 9000 \
     && chown -R ejabberd:ejabberd $HOME
 
 HEALTHCHECK \
-    --interval=5s \
+    --interval=1m \
     --timeout=5s \
     --start-period=5s \
-    --retries=120 \
+    --retries=10 \
     CMD /usr/local/bin/ejabberdctl status
 
 WORKDIR $HOME
 USER ejabberd
 VOLUME ["$HOME/conf", "$HOME/database", "$HOME/logs", "$HOME/upload"]
-EXPOSE 1883 4369-4399 5222 5269 5280 5443
+EXPOSE 1883 4369-4399 5210 5222 5269 5280 5443
 
 ENTRYPOINT ["/usr/local/bin/ejabberdctl"]
 CMD ["foreground"]

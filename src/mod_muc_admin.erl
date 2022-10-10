@@ -41,11 +41,12 @@
 	 set_room_affiliation/4, get_room_affiliations/2, get_room_affiliation/3,
 	 web_menu_main/2, web_page_main/2, web_menu_host/3,
 	 subscribe_room/4, subscribe_room_many/3,
-         unsubscribe_room/2, get_subscribers/2,
-         get_room_serverhost/1,
-         web_page_host/3,
-         mod_opt_type/1, mod_options/1,
-         get_commands_spec/0, find_hosts/1]).
+	 unsubscribe_room/2, get_subscribers/2,
+	 get_room_serverhost/1,
+	 web_page_host/3,
+	 mod_opt_type/1, mod_options/1,
+	 get_commands_spec/0, find_hosts/1, room_diagnostics/2,
+	 get_room_pid/2]).
 
 -include("logger.hrl").
 -include_lib("xmpp/include/xmpp.hrl").
@@ -695,8 +696,7 @@ justcreated_to_binary(J) when is_atom(J) ->
 %% Create/Delete Room
 %%----------------------------
 
-%% @spec (Name::binary(), Host::binary(), ServerHost::binary()) ->
-%%       ok | error
+-spec create_room(Name::binary(), Host::binary(), ServerHost::binary()) -> ok | error.
 %% @doc Create a room immediately with the default options.
 create_room(Name1, Host1, ServerHost) ->
     create_room_with_opts(Name1, Host1, ServerHost, []).
@@ -747,8 +747,7 @@ muc_create_room(ServerHost, {Name, Host, _}, DefRoomOpts) ->
     io:format("Creating room ~ts@~ts~n", [Name, Host]),
     mod_muc:store_room(ServerHost, Host, Name, DefRoomOpts).
 
-%% @spec (Name::binary(), Host::binary()) ->
-%%       ok | {error, room_not_exists}
+-spec destroy_room(Name::binary(), Host::binary()) -> ok | {error, room_not_exists}.
 %% @doc Destroy the room immediately.
 %% If the room has participants, they are not notified that the room was destroyed;
 %% they will notice when they try to chat and receive an error that the room doesn't exist.
@@ -1116,8 +1115,8 @@ send_direct_invitation(FromJid, UserJid, Msg) ->
 %% Change Room Option
 %%----------------------------
 
-%% @spec(Name::string(), Service::string(), Option::string(), Value) -> ok
-%%       Value = atom() | integer() | string()
+-spec change_room_option(Name::binary(), Service::binary(), Option::binary(),
+                         Value::atom() | integer() | string()) -> ok | mod_muc_log_not_enabled.
 %% @doc Change an option in an existing room.
 %% Requires the name of the room, the MUC service where it exists,
 %% the option to change (for example title or max_users),
@@ -1178,6 +1177,28 @@ get_room_pid(Name, Service) ->
 		    room_not_found;
 		{ok, Pid} ->
 		    Pid
+	    end
+    catch
+	error:{invalid_domain, _} ->
+	    invalid_service;
+	error:{unregistered_route, _} ->
+	    invalid_service
+    end.
+
+room_diagnostics(Name, Service) ->
+    try get_room_serverhost(Service) of
+	ServerHost ->
+	    RMod = gen_mod:ram_db_mod(ServerHost, mod_muc),
+	    case RMod:find_online_room(ServerHost, Name, Service) of
+		error ->
+		    room_hibernated;
+		{ok, Pid} ->
+		    case rpc:pinfo(Pid, [current_stacktrace, message_queue_len, messages]) of
+			[{_, R}, {_, QL}, {_, Q}] ->
+			    #{stacktrace => R, queue_size => QL, queue => lists:sublist(Q, 10)};
+			_ ->
+			    unable_to_probe_process
+		    end
 	    end
     catch
 	error:{invalid_domain, _} ->

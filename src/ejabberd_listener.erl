@@ -318,6 +318,9 @@ start_connection(Module, Arity, Socket, State, Sup) ->
 		  supervisor:start_child(Sup, [{gen_tcp, Socket}, State])
 	  end,
     case Res of
+	{ok, Pid, preowned_socket} ->
+	    Module:accept(Pid),
+	    {ok, Pid};
 	{ok, Pid} ->
 	    case gen_tcp:controlling_process(Socket, Pid) of
 		ok ->
@@ -457,11 +460,19 @@ config_reloaded() ->
 		      ok;
 		  {_, OldModule, OldOpts} ->
 		      _ = stop_listener(EndPoint, OldModule, OldOpts),
-		      ets:insert(?MODULE, {EndPoint, Module, Opts}),
-		      start_listener(EndPoint, Module, Opts);
+		      case start_listener(EndPoint, Module, Opts) of
+			  {ok, _} ->
+			      ets:insert(?MODULE, {EndPoint, Module, Opts});
+			  _ ->
+			      ok
+		      end;
 		  false ->
-		      ets:insert(?MODULE, {EndPoint, Module, Opts}),
-		      start_listener(EndPoint, Module, Opts)
+		      case start_listener(EndPoint, Module, Opts) of
+			  {ok, _} ->
+			      ets:insert(?MODULE, {EndPoint, Module, Opts});
+			  _ ->
+			      ok
+		      end
 	      end
       end, New).
 
