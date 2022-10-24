@@ -46,3 +46,6 @@ Mnesia.nonode@nohost/
 /ejabberd-*.rpm
 /ejabberd-*.run
 /ejabberd-*.tar.gz
+/var/
+/etc/
+/share/
