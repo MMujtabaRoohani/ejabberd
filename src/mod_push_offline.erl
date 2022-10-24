@@ -1,12 +1,26 @@
 %%%----------------------------------------------------------------------
-%%% File    : mod_push_modified.erl
-%%% Author  : Mujtaba Roohani <mujtaba@tilismtech.com>
-%%% Purpose : Push Notifications (XEP-0357)
-%%% Created : 7 Oct 2022 by Mujtaba Roohani <mujtaba@tilismtech.com>
+%%% File    : mod_push_offline.erl
+%%% Author  : Mujtaba Roohani <mujtaba.roohani@gamil.com>
+%%% Purpose : Send offline messages to a component
+%%% 
+%%% Copyright (C) 2022 Mujtaba Roohani
+%%%
+%%% This program is free software: you can redistribute it and/or modify
+%%% it under the terms of the GNU General Public License as published by
+%%% the Free Software Foundation, either version 3 of the License, or
+%%% (at your option) any later version.
+%%%
+%%% This program is distributed in the hope that it will be useful,
+%%% but WITHOUT ANY WARRANTY; without even the implied warranty of
+%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+%%% GNU General Public License for more details.
+%%%
+%%% You should have received a copy of the GNU General Public License
+%%% along with this program.  If not, see <https://www.gnu.org/licenses/>
 %%%----------------------------------------------------------------------
 
--module(mod_push_modified).
--author('mujtaba@tilismtech.com').
+-module(mod_push_offline).
+-author('mujtaba.roohani@gmail.com').
 -behaviour(gen_mod).
 
 %% gen_mod callbacks.
@@ -48,7 +62,9 @@ mod_options(Host) ->
 
 mod_doc() ->
     #{desc =>
-          ?T("This module is an alternate to the mod_webhook offered by ejabberd BE."),
+          ?T("This is an ejabberd module that sends all messages sent to an unavailable entity to the" 
+            "specified component. It is a small modification of `mod_push`, customized"
+            "for development of advanced push notification services."),
       opts =>
           [{host,
             #{value => "Host",
@@ -88,9 +104,9 @@ offline_message(Acc) ->
 -spec notify(jid(), xmpp_element() | xmlel() | none) -> ok.
 notify(#jid{lserver = LServer} = To, Pkt) ->
     UnWrappedPkt = unwrap_message(Pkt),
-	DelayedPkt = add_delay_info(UnWrappedPkt, LServer, undefined),
+	DelayedPkt = add_delay_info(UnWrappedPkt, LServer),
 	Id = p1_rand:get_string(),
-	PushServer = mod_push_modified_opt:host(LServer),
+	PushServer = mod_push_offline_opt:host(LServer),
 	WrappedPacket = wrap(DelayedPkt, <<"urn:xmpp:push:nodes:messages">>, Id),
 	ejabberd_router:route(xmpp:set_from_to(WrappedPacket, To, jid:make(PushServer))).
 
@@ -121,13 +137,8 @@ wrap(Packet, Node, Id) ->
 		    id = Id,
 		    sub_els = [Packet]}]}}]}.
 
--spec add_delay_info(message(), binary(),
-		     undefined | erlang:timestamp()) -> message().
-add_delay_info(Packet, LServer, TS) ->
-    NewTS = case TS of
-		undefined -> erlang:timestamp();
-		_ -> TS
-	    end,
+-spec add_delay_info(message(), binary()) -> message().
+add_delay_info(Packet, LServer) ->
     Packet1 = xmpp:put_meta(Packet, from_offline, true),
-    misc:add_delay_info(Packet1, jid:make(LServer), NewTS,
+    misc:add_delay_info(Packet1, jid:make(LServer), erlang:timestamp(),
 			<<"Offline storage">>).
