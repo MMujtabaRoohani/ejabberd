@@ -53,9 +53,9 @@ mod_doc() ->
           [{host,
             #{value => "Host",
               desc =>
-                  ?T("This option defines the host to receive rest api calls from the service. "
-                     "If the 'hosts' option is not specified, the host will be "
-                     "be the hostname of the virtual host with the prefix \"push.\". ")}}]}.
+                  ?T("This option defines the host to receive offline messages from the service. "
+                     "If the 'host' option is not specified, the host will be "
+                     "the hostname of the virtual host with the prefix \"push.\". ")}}]}.
 
 %%--------------------------------------------------------------------
 %% Register/unregister hooks.
